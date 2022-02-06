@@ -35,13 +35,13 @@ describe('Saga-style Effects Scenarios', () => {
   const { increment, decrement, incrementByAmount } = counterSlice.actions
 
   let { reducer } = counterSlice
-  let middleware: ReturnType<typeof createListenerMiddleware>
+  let middlewareObj = createListenerMiddleware<CounterState>()
+  let { middleware, addListener, removeListener } = middlewareObj
 
   let store = configureStore({
     reducer,
-    middleware: (gDM) => gDM().prepend(createListenerMiddleware()),
+    middleware: (gDM) => gDM().prepend(middleware),
   })
-  // let middleware: ActionListenerMiddleware<CounterState> //: ReturnType<typeof createListenerMiddleware>
 
   const testAction1 = createAction<string>('testAction1')
   type TestAction1 = ReturnType<typeof testAction1>
@@ -51,8 +51,6 @@ describe('Saga-style Effects Scenarios', () => {
   type TestAction3 = ReturnType<typeof testAction3>
 
   type RootState = ReturnType<typeof store.getState>
-
-  let addListener: TypedAddListener<RootState>
 
   function delay(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms))
@@ -64,8 +62,9 @@ describe('Saga-style Effects Scenarios', () => {
   })
 
   beforeEach(() => {
-    middleware = createListenerMiddleware()
-    addListener = middleware.addListener as TypedAddListener<RootState>
+    middlewareObj = createListenerMiddleware<CounterState>()
+    middleware = middlewareObj.middleware
+    addListener = middlewareObj.addListener
     store = configureStore({
       reducer,
       middleware: (gDM) => gDM().prepend(middleware),

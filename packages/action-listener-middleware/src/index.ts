@@ -456,13 +456,10 @@ export function createListenerMiddleware<
     return result
   }
 
-  return assign(
+  return {
     middleware,
-    {
-      addListener: addListener as TypedAddListener<S, D>,
-      removeListener: removeListener as TypedRemoveListener<S, D>,
-      clearListeners: clearListenerMiddleware,
-    },
-    {} as WithMiddlewareType<typeof middleware>
-  )
+    addListener: addListener as TypedAddListener<S, D>,
+    removeListener: removeListener as TypedRemoveListener<S, D>,
+    clearListeners: clearListenerMiddleware,
+  }
 }
