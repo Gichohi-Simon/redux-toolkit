@@ -16,7 +16,7 @@ yarn add @rtk-incubator/action-listener-middleware
 
 ```js
 import { configureStore } from '@reduxjs/toolkit'
-import { createActionListenerMiddleware } from '@rtk-incubator/action-listener-middleware'
+import { createListenerMiddleware } from '@rtk-incubator/action-listener-middleware'
 
 import todosReducer, {
   todoAdded,
@@ -24,28 +24,31 @@ import todosReducer, {
   todoDeleted,
 } from '../features/todos/todosSlice'
 
-// Create the middleware instance
-const listenerMiddleware = createActionListenerMiddleware()
+// Create the middleware instance and methods
+const { middleware, addListener } = createListenerMiddleware()
 
 // Add one or more listener callbacks for specific actions. They may
 // contain any sync or async logic, similar to thunks.
-listenerMiddleware.addListener(todoAdded, async (action, listenerApi) => {
-  // Run whatever additional side-effect-y logic you want here
-  console.log('Todo added: ', action.payload.text)
+addListener({
+  actionCreator: todoAdded,
+  listener: async (action, listenerApi) => {
+    // Run whatever additional side-effect-y logic you want here
+    console.log('Todo added: ', action.payload.text)
 
-  // Can cancel other running instances
-  listenerApi.cancelActiveListeners()
+    // Can cancel other running instances
+    listenerApi.cancelActiveListeners()
 
-  // Run async logic
-  const data = await fetchData()
+    // Run async logic
+    const data = await fetchData()
 
-  // Pause until action dispatched or state changed
-  if (await listenerApi.condition(matchSomeAction)) {
-    // Use the listener API methods to dispatch, get state,
-    // unsubscribe the listener, or cancel previous
-    listenerApi.dispatch(todoAdded('Buy pet food'))
-    listenerApi.unsubscribe()
-  }
+    // Pause until action dispatched or state changed
+    if (await listenerApi.condition(matchSomeAction)) {
+      // Use the listener API methods to dispatch, get state,
+      // unsubscribe the listener, or cancel previous
+      listenerApi.dispatch(todoAdded('Buy pet food'))
+      listenerApi.unsubscribe()
+    }
+  },
 })
 
 const store = configureStore({
@@ -53,10 +56,10 @@ const store = configureStore({
     todos: todosReducer,
   },
   // Add the middleware to the store.
-  // NOTE Since this can receive actions with functions inside,
+  // NOTE: Since this can receive actions with functions inside,
   // it should go before the serializability check middleware
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().prepend(listenerMiddleware),
+    getDefaultMiddleware().prepend(middleware),
 })
 ```
 
@@ -88,7 +91,7 @@ const myMiddleware = (storeAPI) => (next) => (action) => {
 
 However, it would be nice to have a more structured API to help abstract this process.
 
-The `createActionListenerMiddleware` API provides that structure.
+The `createListenerMiddleware` API provides that structure.
 
 For more background and debate over the use cases and API design, see the original discussion issue and PR:
 
@@ -98,13 +101,13 @@ For more background and debate over the use cases and API design, see the origin
 
 ## API Reference
 
-`createActionListenerMiddleware` lets you add listeners by providing a "listener callback" containing additional logic, a way to specify when that callback should run based on dispatched actions or state changes, and whether your callback should run before or after the action is processed by the reducers.
+`createListenerMiddleware` lets you add listeners by providing a "listener callback" containing additional logic, and a way to specify when that callback should run based on dispatched actions or state changes.
 
-The middleware then gives you access to `dispatch` and `getState` for use in your listener callback's logic. Callbacks can also unsubscribe to stop from being run again in the future.
+The middleware then gives you access to `dispatch` and `getState` for use in your listener callback's logic, similar to thunks. The listener also receives a set of async workflow functions like `take`, `condition`, `pause`, `fork`, and `unsubscribe`, which allow writing more complex async logic.
 
-Listeners can be defined statically by calling `listenerMiddleware.addListener()` during setup, or added and removed dynamically at runtime with special `dispatch(addListenerAction())` and `dispatch(removeListenerAction())` actions.
+Listeners can be defined statically by calling `addListener()` during setup, or added and removed dynamically at runtime with special `dispatch(addListenerAction())` and `dispatch(removeListenerAction())` actions.
 
-### `createActionListenerMiddleware: (options?: CreateMiddlewareOptions) => Middleware`
+### `createListenerMiddleware: (options?: CreateMiddlewareOptions) => Middleware`
 
 Creates an instance of the middleware, which should then be added to the store via `configureStore`'s `middleware` parameter.
 
@@ -114,7 +117,14 @@ Current options are:
 
 - `onError`: an optional error handler that gets called with synchronous and async errors raised by `listener` and synchronous errors thrown by `predicate`.
 
-### `listenerMiddleware.addListener(options: AddListenerOptions) : Unsubscribe`
+`createListener` returns an object (similar to how `createSlice` does), with the following fields:
+
+- `middleware`: the actual listener middleware instance. Add this to `configureStore()`
+- `addListener`: adds a single listener entry to this specific middleware instance
+- `removeListener`: removes a single listener entry from this specific middleware instance
+- `clearListeners`: removes all listener entries from this specific middleware instance
+
+### `addListener(options: AddListenerOptions) : Unsubscribe`
 
 Statically adds a new listener callback to the middleware.
 
@@ -152,13 +162,13 @@ These are all acceptable:
 
 ```ts
 // 1) Action type string
-middleware.addListener({ type: 'todos/todoAdded', listener })
+addListener({ type: 'todos/todoAdded', listener })
 // 2) RTK action creator
-middleware.addListener({ actionCreator: todoAdded, listener })
+addListener({ actionCreator: todoAdded, listener })
 // 3) RTK matcher function
-middleware.addListener({ matcher: isAnyOf(todoAdded, todoToggled), listener })
+addListener({ matcher: isAnyOf(todoAdded, todoToggled), listener })
 // 4) Listener predicate
-middleware.addListener({
+addListener({
   predicate: (action, currentState, previousState) => {
     // return true when the listener should run
   },
@@ -174,30 +184,30 @@ The `listener` callback will receive the current action as its first argument, a
 
 All listener predicates and callbacks are checked _after_ the root reducer has already processed the action and updated the state. The `listenerApi.getOriginalState()` method can be used to get the state value that existed before the action that triggered this listener was processed.
 
-### `listenerMiddleware.removeListener(options: AddListenerOptions): boolean`
+### `removeListener(options: AddListenerOptions): boolean`
 
-Removes a given listener. It accepts the same arguments as `middleware.addListener()`. It checks for an existing listener entry by comparing the function references of `listener` and the provided `actionCreator/matcher/predicate` function or `type` string.
+Removes a given listener. It accepts the same arguments as `addListener()`. It checks for an existing listener entry by comparing the function references of `listener` and the provided `actionCreator/matcher/predicate` function or `type` string.
 
 Returns `true` if the `options.listener` listener has been removed, `false` if no subscription matching the input provided has been found.
 
 ```ts
 // 1) Action type string
-middleware.removeListener({ type: 'todos/todoAdded', listener })
+removeListener({ type: 'todos/todoAdded', listener })
 // 2) RTK action creator
-middleware.removeListener({ actionCreator: todoAdded, listener })
+removeListener({ actionCreator: todoAdded, listener })
 // 3) RTK matcher function
-middleware.removeListener({ matcher, listener })
+removeListener({ matcher, listener })
 // 4) Listener predicate
-middleware.removeListener({ predicate, listener })
+removeListener({ predicate, listener })
 ```
 
-### `listenerMiddleware.clearListeners(): void`
+### `clearListeners(): void`
 
 Removes all current listener entries. This is most likely useful for test scenarios where a single middleware or store instance might be used in multiple tests, as well as some app cleanup situations.
 
 ### `addListenerAction`
 
-A standard RTK action creator. Dispatching this action tells the middleware to dynamically add a new listener at runtime. It accepts exactly the same options as `middleware.addListener()`
+A standard RTK action creator, imported from the package. Dispatching this action tells the middleware to dynamically add a new listener at runtime. It accepts exactly the same options as `addListener()`
 
 Dispatching this action returns an `unsubscribe()` callback from `dispatch`.
 
@@ -208,7 +218,7 @@ const unsubscribe = store.dispatch(addListenerAction({ predicate, listener }))
 
 ### `removeListenerAction`
 
-A standard RTK action creator. Dispatching this action tells the middleware to dynamically remove a listener at runtime. Accepts the same arguments as `middleware.removeListener()`.
+A standard RTK action creator, imported from the package. Dispatching this action tells the middleware to dynamically remove a listener at runtime. Accepts the same arguments as `removeListener()`.
 
 Returns `true` if the `options.listener` listener has been removed, `false` if no subscription matching the input provided has been found.
 
@@ -245,7 +255,7 @@ Dynamically unsubscribing and re-subscribing this listener allows for more compl
 
 #### Conditional Workflow Execution
 
-- `take: (predicate: ListenerPredicate, timeout?: number) => Promise<[Action, State, State] | null>`: returns a promise that will resolve when the `predicate` returns `true`. The return value is the `[action, currentState, previousState]` combination that the predicate saw as arguments. If a `timeout` is provided and expires if a `timeout` is provided and expires first. the promise resolves to `null`.
+- `take: (predicate: ListenerPredicate, timeout?: number) => Promise<[Action, State, State] | null>`: returns a promise that will resolve when the `predicate` returns `true`. The return value is the `[action, currentState, previousState]` combination that the predicate saw as arguments. If a `timeout` is provided and expires first, the promise resolves to `null`.
 - `condition: (predicate: ListenerPredicate, timeout?: number) => Promise<boolean>`: Similar to `take`, but resolves to `true` if the predicate succeeds, and `false` if a `timeout` is provided and expires first. This allows async logic to pause and wait for some condition to occur before continuing. See "Writing Async Workflows" below for details on usage.
 - `delay: (timeoutMs: number) => Promise<void>`: returns a cancelation-aware promise that resolves after the timeout, or rejects if canceled before the expiration
 - `pause: (promise: Promise<T>) => Promise<T>`: accepts any promise, and returns a cancelation-aware promise that either resolves with the argument promise or rejects if canceled before the resolution
@@ -316,7 +326,7 @@ As of v0.5.0, the middleware does include several async workflow primitives that
 The most common expected usage is "run some logic after a given action was dispatched". For example, you could set up a simple analytics tracker by looking for certain actions and sending extracted data to the server, including pulling user details from the store:
 
 ```js
-middleware.addListener({
+addListener({
   matcher: isAnyOf(action1, action2, action3),
   listener: (action, listenerApi) => {
     const user = selectUserDetails(listenerApi.getState())
@@ -331,7 +341,7 @@ middleware.addListener({
 You could also implement a generic API fetching capability, where the UI dispatches a plain action describing the type of resource to be requested, and the middleware automatically fetches it and dispatches a result action:
 
 ```js
-middleware.addListener({
+addListener({
   actionCreator: resourceRequested,
   listener: async (action, listenerApi) => {
     const { name, args } = action.payload
@@ -380,7 +390,7 @@ test('condition method resolves promise when there is a timeout', async () => {
   let finalCount = 0
   let listenerStarted = false
 
-  middleware.addListener(
+  addListener(
     // @ts-expect-error state declaration not yet working right
     (action, currentState: CounterState) => {
       return increment.match(action) && currentState.value === 0
@@ -430,7 +440,7 @@ The `listenerApi.pause/delay()` functions provide a cancelation-aware way to hav
 `listenerApi.fork()` can used to launch "child tasks" that can do additional work. These can be waited on to collect their results. An example of this might look like:
 
 ```ts
-middleware.addListener({
+addListener({
   actionCreator: increment,
   listener: async (action, listenerApi) => {
     // Spawn a child task and start it immediately
@@ -533,12 +543,12 @@ test('canceled', async () => {
 
 ### TypeScript Usage
 
-The code is fully typed. However, the `middleware.addListener` and `addListenerAction` functions do not know what the store's `RootState` type looks like by default, so `getState()` will return `unknown`.
+The code is fully typed. However, the `addListener` and `addListenerAction` functions do not know what the store's `RootState` type looks like by default, so `getState()` will return `unknown`.
 
 To fix this, the middleware provides types for defining "pre-typed" versions of those methods, similar to the pattern used for defing pre-typed React-Redux hooks:
 
 ```ts
-// middleware.ts
+// listenerMiddleware.ts
 import {
   createActionListener,
   addListenerAction,
@@ -548,10 +558,9 @@ import {
 
 import { RootState } from './store'
 
-export const listenerMiddleware = createActionListenerMiddleware()
+export const { middleware, addListener } = createListenerMiddleware()
 
-export const addAppListener =
-  listenerMiddleware.addListener as TypedAddListener<RootState>
+export const addAppListener = addListener as TypedAddListener<RootState>
 export const addAppListenerAction =
   addListenerAction as TypedAddListenerAction<RootState>
 ```
